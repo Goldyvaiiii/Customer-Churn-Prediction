@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+env/
+.env
+
+# Database and Vector DB
+*.db
+*.sqlite
+data/*.db
+data/*.sqlite
+data/chroma_db/
+.chroma/
+
+# ML models and scalers
+*.joblib
+*.pkl
+*.pkl.gz
+src/ml/models/
+models/
+
+# OS and IDEs
+.vscode/
+.idea/
+.DS_Store
+.streamlit/
