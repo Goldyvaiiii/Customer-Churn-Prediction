@@ -12,7 +12,13 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.linear_model import LogisticRegression
 from sklearn.ensemble import RandomForestClassifier
-from xgboost import XGBClassifier
+try:
+    from xgboost import XGBClassifier
+    HAS_XGB = True
+except Exception as e:
+    HAS_XGB = False
+
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
 import logging
 
@@ -225,9 +231,12 @@ def train_and_evaluate(df: pd.DataFrame) -> Tuple[Dict[str, Any], Dict[str, Any]
     # Define models
     models = {
         "LogisticRegression": LogisticRegression(max_iter=1000, random_state=42),
-        "RandomForest": RandomForestClassifier(n_estimators=150, max_depth=10, random_state=42),
-        "XGBoost": XGBClassifier(n_estimators=100, max_depth=5, learning_rate=0.08, eval_metric="logloss", random_state=42)
+        "RandomForest": RandomForestClassifier(n_estimators=150, max_depth=10, random_state=42)
     }
+    if HAS_XGB:
+        models["XGBoost"] = XGBClassifier(n_estimators=100, max_depth=5, learning_rate=0.08, eval_metric="logloss", random_state=42)
+    else:
+        models["GradientBoosting"] = HistGradientBoostingClassifier(max_iter=100, max_depth=5, learning_rate=0.08, random_state=42)
     
     trained_pipelines = {}
     metrics = {}
@@ -304,7 +313,7 @@ def get_shap_explanation(customer_df: pd.DataFrame, model_data: Dict[str, Any]) 
     # Limit background dataset size for explainers that require background summaries
     # We will build an explainer
     try:
-        if model_name in ["RandomForest", "XGBoost"]:
+        if model_name in ["RandomForest", "XGBoost", "GradientBoosting"]:
             explainer = shap.TreeExplainer(model)
             shap_values = explainer.shap_values(cust_proc)
             
