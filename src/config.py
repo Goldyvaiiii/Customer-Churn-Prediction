@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Base directories
-BASE_DIR = Path(__file__).resolve().parent.parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent
 SRC_DIR = BASE_DIR / "src"
 DATA_DIR = BASE_DIR / "data"
 DOCS_DIR = DATA_DIR / "docs"
