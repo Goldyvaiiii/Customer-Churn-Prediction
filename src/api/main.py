@@ -54,6 +54,32 @@ def startup_event():
     except Exception as e:
         logger.error(f"Failed to ingest documents on startup: {e}")
 
+def customer_to_ml_dict(c: Customer) -> Dict[str, Any]:
+    """Maps database snake_case fields to mixedCase/PascalCase ML pipeline features."""
+    return {
+        "customerID": c.customer_id,
+        "gender": c.gender,
+        "SeniorCitizen": c.senior_citizen,
+        "Partner": c.partner,
+        "Dependents": c.dependents,
+        "tenure": c.tenure,
+        "PhoneService": c.phone_service,
+        "MultipleLines": c.multiple_lines,
+        "InternetService": c.internet_service,
+        "OnlineSecurity": c.online_security,
+        "OnlineBackup": c.online_backup,
+        "DeviceProtection": c.device_protection,
+        "TechSupport": c.tech_support,
+        "StreamingTV": c.streaming_tv,
+        "StreamingMovies": c.streaming_movies,
+        "Contract": c.contract,
+        "PaperlessBilling": c.paperless_billing,
+        "PaymentMethod": c.payment_method,
+        "MonthlyCharges": c.monthly_charges,
+        "TotalCharges": c.total_charges,
+        "Churn": c.churn
+    }
+
 @app.get("/")
 def read_root():
     return {
@@ -144,11 +170,7 @@ def upload_dataset(file: UploadFile = File(...), db: Session = Depends(get_db)):
             # Query back all customers to ensure clean processing
             customers = db.query(Customer).all()
             
-            cust_dicts = []
-            for c in customers:
-                d = {col.name: getattr(c, col.name) for col in c.__table__.columns}
-                d["customerID"] = d["customer_id"] # pipeline expects customerID
-                cust_dicts.append(d)
+            cust_dicts = [customer_to_ml_dict(c) for c in customers]
                 
             cust_df = pd.DataFrame(cust_dicts)
             
@@ -245,11 +267,7 @@ def train_model(db: Session = Depends(get_db)):
         customers = db.query(Customer).all()
         
     # Convert SQLAlchemy items to DataFrame
-    cust_dicts = []
-    for c in customers:
-        d = {col.name: getattr(c, col.name) for col in c.__table__.columns}
-        d["customerID"] = d["customer_id"] # mapping
-        cust_dicts.append(d)
+    cust_dicts = [customer_to_ml_dict(c) for c in customers]
         
     df_train = pd.DataFrame(cust_dicts)
     
@@ -333,8 +351,7 @@ def explain_customer_churn(customer_id: str, db: Session = Depends(get_db)):
         active_model = load_model()
         
         # Convert single customer to DataFrame row
-        c_dict = {col.name: getattr(cust, col.name) for col in cust.__table__.columns}
-        c_dict["customerID"] = c_dict["customer_id"]
+        c_dict = customer_to_ml_dict(cust)
         c_df = pd.DataFrame([c_dict])
         
         # Get SHAP explanations
