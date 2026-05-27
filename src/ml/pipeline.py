@@ -41,8 +41,8 @@ def generate_synthetic_data(n_samples: int = 1000) -> pd.DataFrame:
     """Generates realistic synthetic telecom customer churn data."""
     np.random.seed(42)
     
-    # Generate Customer IDs
-    customer_ids = [f"US-{np.random.randint(10000, 99999)}" for _ in range(n_samples)]
+    # Generate Customer IDs sequentially to ensure 100% uniqueness
+    customer_ids = [f"US-{10000 + i}" for i in range(n_samples)]
     
     # Categorical distributions
     genders = np.random.choice(["Male", "Female"], size=n_samples)
