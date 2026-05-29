@@ -1,0 +1,49 @@
+name: "\U0001F680 Feature Request"
+description: "Propose a new feature or enhancement for the platform."
+title: "[FEAT] "
+labels: ["enhancement"]
+assignees: []
+
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Help us understand what you need and why.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: "Problem Statement"
+      description: "Is your feature request related to a problem? Please describe."
+      placeholder: "I'm always frustrated when..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: "Proposed Solution"
+      description: "Describe the solution you'd like."
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: "Alternatives Considered"
+      description: "Any alternative solutions or features you've considered?"
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: "Feature Area"
+      options:
+        - "ML Models / Training"
+        - "Dashboard / Visualization"
+        - "RAG / LLM Integration"
+        - "API Endpoints"
+        - "Deployment / DevOps"
+        - "Documentation"
+        - "Other"
+    validations:
+      required: true
