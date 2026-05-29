@@ -106,13 +106,12 @@ if "chat_history" not in st.session_state:
 with st.sidebar:
     st.markdown('<div class="sidebar-header">🔮 Churn Intelligence</div>', unsafe_allow_html=True)
     
-    # Check API health
+    # Check API health and show status
     is_online = utils.check_backend_health()
     if is_online:
         st.sidebar.success("● API Service Connected")
     else:
-        st.sidebar.error("❌ API Service Offline")
-        st.sidebar.info("Run `uvicorn src.api.main:app --reload` to start the backend.")
+        st.sidebar.info("⚡ Standalone Mode (No backend required)")
         
     st.markdown("---")
     
@@ -129,25 +128,14 @@ with st.sidebar:
     st.markdown("---")
     st.markdown("<small>Enterprise Churn Platform v1.0<br>Developer Portfolio Mockup</small>", unsafe_allow_html=True)
 
-# Exit early if backend is offline to prevent crashes
+# Show a dismissible notice if running in standalone mode (no backend)
 if not is_online:
-    st.title("🔌 API Connection Required")
-    st.warning("The Streamlit frontend is unable to reach the FastAPI backend server.")
-    st.markdown("""
-    ### How to start the application:
-    1. **Start the Backend**:
-       Open a terminal and run:
-       ```bash
-       uvicorn src.api.main:app --reload --port 8000
-       ```
-    2. **Start the Frontend**:
-       In a separate terminal tab, run:
-       ```bash
-       streamlit run src/frontend/app.py
-       ```
-    3. Ensure you have activated your virtual environment and installed the dependencies listed in `requirements.txt`.
-    """)
-    st.stop()
+    st.info(
+        "⚡ **Standalone Mode** — Running directly on Streamlit Cloud without a backend server. "
+        "All ML, database, and RAG operations run inline. "
+        "Head to **Model & System Manager → Seed Synthetic Dataset** to populate the dashboard.",
+        icon="ℹ️"
+    )
 
 # ----------------- DASHBOARD PAGE -----------------
 if st.session_state["active_page"] == "Dashboard":

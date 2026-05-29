@@ -27,4 +27,6 @@ models/
 .vscode/
 .idea/
 .DS_Store
-.streamlit/
+# Note: .streamlit/config.toml is tracked (needed for Streamlit Cloud)
+# Only ignore secrets to avoid leaking keys
+.streamlit/secrets.toml
