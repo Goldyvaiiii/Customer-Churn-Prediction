@@ -327,8 +327,21 @@ elif st.session_state["active_page"] == "Explorer":
                 )
                 st.session_state["selected_customer"] = selected_id
                 
-                # Render mini table
-                st.dataframe(display_df.set_index("customer_id"), use_container_width=True)
+                # Render styled colorful table
+                def style_risk(row):
+                    risk = row["risk_category"]
+                    if risk == "High":
+                        return ["background-color: rgba(239, 68, 68, 0.15); color: #EF4444; font-weight: 500;"] * len(row)
+                    elif risk == "Medium":
+                        return ["background-color: rgba(245, 158, 11, 0.15); color: #F59E0B; font-weight: 500;"] * len(row)
+                    elif risk == "Low":
+                        return ["background-color: rgba(16, 185, 129, 0.15); color: #10B981; font-weight: 500;"] * len(row)
+                    else:
+                        return [""] * len(row)
+
+                indexed_df = display_df.set_index("customer_id")
+                styled_df = indexed_df.style.apply(style_risk, axis=1)
+                st.dataframe(styled_df, use_container_width=True)
             else:
                 st.warning("No customers match the active filters.")
                 st.session_state["selected_customer"] = None

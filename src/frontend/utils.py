@@ -187,8 +187,7 @@ def _standalone_get_audit_logs() -> List[Dict[str, Any]]:
 def _standalone_shap_explain(customer_id: str) -> Dict[str, Any]:
     """Runs SHAP explanation directly using loaded model."""
     try:
-        from ml.pipeline import build_preprocessor, NUMERIC_FEATURES, CATEGORICAL_FEATURES
-        import shap
+        from ml.pipeline import get_shap_explanation, NUMERIC_FEATURES, CATEGORICAL_FEATURES
     except ImportError:
         return {"error": "ML dependencies not available in this environment."}
 
@@ -222,40 +221,26 @@ def _standalone_shap_explain(customer_id: str) -> Dict[str, Any]:
     }
     c_df = pd.DataFrame([c_dict])
 
-    preprocessor = model_bundle.get("preprocessor")
-    model = model_bundle.get("model")
-    if preprocessor is None or model is None:
-        return {"error": "Model bundle is incomplete."}
-
-    features = NUMERIC_FEATURES + CATEGORICAL_FEATURES
-    X = c_df[features]
-    X_proc = preprocessor.transform(X)
-
-    prob = float(model.predict_proba(X_proc)[0][1])
-    risk = "High" if prob > 0.7 else "Medium" if prob > 0.3 else "Low"
-
     try:
-        explainer = shap.TreeExplainer(model)
-        shap_vals = explainer.shap_values(X_proc)
-        if isinstance(shap_vals, list):
-            shap_vals = shap_vals[1]
-        feature_names = preprocessor.get_feature_names_out()
-        shap_series = pd.Series(shap_vals[0], index=feature_names)
-        top = shap_series.abs().nlargest(10).index
-        factors = [
-            {"feature": f, "shap_value": float(shap_series[f]),
-             "importance": float(abs(shap_series[f]))}
-            for f in top
-        ]
-    except Exception:
-        factors = []
-
-    return {
-        "customer_id": customer_id,
-        "churn_probability": prob,
-        "risk_category": risk,
-        "top_factors": factors
-    }
+        factors = get_shap_explanation(c_df, model_bundle)
+        
+        preprocessor = model_bundle.get("preprocessor")
+        model = model_bundle.get("model")
+        features = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+        X = c_df[features]
+        X_proc = preprocessor.transform(X)
+        prob = float(model.predict_proba(X_proc)[0][1])
+        risk = "High" if prob >= 0.7 else "Medium" if prob >= 0.3 else "Low"
+        
+        return {
+            "customer_id": customer_id,
+            "churn_probability": prob,
+            "risk_category": risk,
+            "top_factors": factors
+        }
+    except Exception as e:
+        logger.error(f"SHAP explanation failed: {e}")
+        return {"error": f"SHAP calculation error: {e}"}
 
 def _standalone_rag_query(query: str, customer_id: Optional[str] = None) -> Dict[str, Any]:
     """Performs RAG retrieval directly using ChromaDB."""
@@ -288,13 +273,14 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
             generate_synthetic_data, train_and_evaluate,
             save_best_pipeline, NUMERIC_FEATURES, CATEGORICAL_FEATURES
         )
-        from database import SessionLocal, init_db, Customer as CustomerModel
+        from database import SessionLocal, init_db, Customer as CustomerModel, Prediction as PredictionModel
 
         init_db()
         df = generate_synthetic_data(1000)
 
         # Write customers to DB
         db = SessionLocal()
+        db.query(PredictionModel).delete()
         db.query(CustomerModel).delete()
         db.commit()
 
@@ -355,12 +341,20 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
                 row_df = pd.DataFrame([c_dict])[features]
                 X_t = preprocessor.transform(row_df)
                 prob = float(best_model.predict_proba(X_t)[0][1])
-                risk = "High" if prob > 0.7 else "Medium" if prob > 0.3 else "Low"
-                c.churn_probability = prob
-                c.risk_category = risk
-                c.model_version = best_name
-            except Exception:
-                pass
+                risk = "High" if prob >= 0.7 else "Medium" if prob >= 0.3 else "Low"
+                pred_val = 1 if prob >= 0.5 else 0
+                
+                pred_obj = PredictionModel(
+                    customer_id=c.customer_id,
+                    churn_probability=prob,
+                    churn_prediction=pred_val,
+                    risk_category=risk,
+                    explainability=json.dumps({"factors": []}),
+                    model_version=best_name
+                )
+                db.add(pred_obj)
+            except Exception as e:
+                logger.error(f"Error predicting for {c.customer_id}: {e}")
         db.commit()
         db.close()
 
@@ -377,7 +371,8 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
 def _standalone_upload_csv(file_bytes: bytes, filename: str) -> Dict[str, Any]:
     """Processes uploaded CSV and runs predictions in standalone mode."""
     try:
-        from database import SessionLocal, init_db, Customer as CustomerModel
+        from database import SessionLocal, init_db, Customer as CustomerModel, Prediction as PredictionModel
+        from ml.pipeline import train_and_evaluate, save_best_pipeline, NUMERIC_FEATURES, CATEGORICAL_FEATURES
         import joblib
 
         init_db()
@@ -387,10 +382,10 @@ def _standalone_upload_csv(file_bytes: bytes, filename: str) -> Dict[str, Any]:
             df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin-1")
 
         # Normalize column names
-        col_map = {c.lower().replace(" ", "_"): c for c in df.columns}
         df.columns = [c.strip() for c in df.columns]
 
         db = SessionLocal()
+        db.query(PredictionModel).delete()
         db.query(CustomerModel).delete()
         db.commit()
 
@@ -402,47 +397,105 @@ def _standalone_upload_csv(file_bytes: bytes, filename: str) -> Dict[str, Any]:
             return None
 
         count = 0
+        customers_to_add = []
         for _, row in df.iterrows():
             try:
                 cid_col = gc(["customerID", "CustomerID", "customer_id"])
                 cust = CustomerModel(
                     customer_id=str(row[cid_col]) if cid_col else f"C-{count}",
-                    gender=row.get(gc(["gender", "Gender"]), "Male"),
+                    gender=str(row.get(gc(["gender", "Gender"]), "Male")),
                     senior_citizen=int(row.get(gc(["SeniorCitizen", "senior_citizen"]), 0)),
-                    partner=row.get(gc(["Partner", "partner"]), "No"),
-                    dependents=row.get(gc(["Dependents", "dependents"]), "No"),
+                    partner=str(row.get(gc(["Partner", "partner"]), "No")),
+                    dependents=str(row.get(gc(["Dependents", "dependents"]), "No")),
                     tenure=int(row.get(gc(["tenure", "Tenure"]), 0)),
-                    phone_service=row.get(gc(["PhoneService", "phone_service"]), "Yes"),
-                    multiple_lines=row.get(gc(["MultipleLines", "multiple_lines"]), "No"),
-                    internet_service=row.get(gc(["InternetService", "internet_service"]), "Fiber optic"),
-                    online_security=row.get(gc(["OnlineSecurity", "online_security"]), "No"),
-                    online_backup=row.get(gc(["OnlineBackup", "online_backup"]), "No"),
-                    device_protection=row.get(gc(["DeviceProtection", "device_protection"]), "No"),
-                    tech_support=row.get(gc(["TechSupport", "tech_support"]), "No"),
-                    streaming_tv=row.get(gc(["StreamingTV", "streaming_tv"]), "No"),
-                    streaming_movies=row.get(gc(["StreamingMovies", "streaming_movies"]), "No"),
-                    contract=row.get(gc(["Contract", "contract"]), "Month-to-month"),
-                    paperless_billing=row.get(gc(["PaperlessBilling", "paperless_billing"]), "Yes"),
-                    payment_method=row.get(gc(["PaymentMethod", "payment_method"]), "Electronic check"),
+                    phone_service=str(row.get(gc(["PhoneService", "phone_service"]), "Yes")),
+                    multiple_lines=str(row.get(gc(["MultipleLines", "multiple_lines"]), "No")),
+                    internet_service=str(row.get(gc(["InternetService", "internet_service"]), "Fiber optic")),
+                    online_security=str(row.get(gc(["OnlineSecurity", "online_security"]), "No")),
+                    online_backup=str(row.get(gc(["OnlineBackup", "online_backup"]), "No")),
+                    device_protection=str(row.get(gc(["DeviceProtection", "device_protection"]), "No")),
+                    tech_support=str(row.get(gc(["TechSupport", "tech_support"]), "No")),
+                    streaming_tv=str(row.get(gc(["StreamingTV", "streaming_tv"]), "No")),
+                    streaming_movies=str(row.get(gc(["StreamingMovies", "streaming_movies"]), "No")),
+                    contract=str(row.get(gc(["Contract", "contract"]), "Month-to-month")),
+                    paperless_billing=str(row.get(gc(["PaperlessBilling", "paperless_billing"]), "Yes")),
+                    payment_method=str(row.get(gc(["PaymentMethod", "payment_method"]), "Electronic check")),
                     monthly_charges=float(row.get(gc(["MonthlyCharges", "monthly_charges"]), 0)),
                     total_charges=float(str(row.get(gc(["TotalCharges", "total_charges"]), 0)).replace(" ", "") or 0),
-                    churn=row.get(gc(["Churn", "churn"]), "No"),
+                    churn=str(row.get(gc(["Churn", "churn"]), "No")),
                 )
                 db.add(cust)
+                customers_to_add.append(cust)
                 count += 1
             except Exception:
                 continue
 
         db.commit()
 
-        # Quick train and predict
-        result = _standalone_seed_and_train()
-        db.close()
+        # Load active model or train one if not exists
+        model_bundle = _load_standalone_model()
+        if not model_bundle:
+            logger.info("No active model found. Training on uploaded CSV data.")
+            if count >= 10:
+                try:
+                    trained_pipelines, metrics_dict = train_and_evaluate(df)
+                    best_name = save_best_pipeline(trained_pipelines, metrics_dict)
+                    model_bundle = trained_pipelines[best_name]
+                    model_bundle["model_name"] = best_name
+                except Exception as train_err:
+                    logger.error(f"Failed to train on uploaded data: {train_err}")
+            
+        predictions_run = 0
+        if model_bundle:
+            logger.info("Running predictions on uploaded dataset...")
+            preprocessor = model_bundle.get("preprocessor")
+            model = model_bundle.get("model")
+            model_name = model_bundle.get("model_name", "Model")
+            
+            cust_dicts = []
+            for c in customers_to_add:
+                cust_dicts.append({
+                    "customerID": c.customer_id, "gender": c.gender,
+                    "SeniorCitizen": c.senior_citizen, "Partner": c.partner,
+                    "Dependents": c.dependents, "tenure": c.tenure,
+                    "PhoneService": c.phone_service, "MultipleLines": c.multiple_lines,
+                    "InternetService": c.internet_service, "OnlineSecurity": c.online_security,
+                    "OnlineBackup": c.online_backup, "DeviceProtection": c.device_protection,
+                    "TechSupport": c.tech_support, "StreamingTV": c.streaming_tv,
+                    "StreamingMovies": c.streaming_movies, "Contract": c.contract,
+                    "PaperlessBilling": c.paperless_billing, "PaymentMethod": c.payment_method,
+                    "MonthlyCharges": c.monthly_charges, "TotalCharges": c.total_charges,
+                    "Churn": c.churn
+                })
+            
+            cust_df = pd.DataFrame(cust_dicts)
+            features = NUMERIC_FEATURES + CATEGORICAL_FEATURES
+            X_proc = preprocessor.transform(cust_df[features])
+            probs = model.predict_proba(X_proc)[:, 1]
+            preds = model.predict(X_proc)
+            
+            for c, prob, pred in zip(customers_to_add, probs, preds):
+                prob_val = float(prob)
+                pred_val = int(pred)
+                risk = "High" if prob_val >= 0.7 else "Medium" if prob_val >= 0.3 else "Low"
+                
+                pred_obj = PredictionModel(
+                    customer_id=c.customer_id,
+                    churn_probability=prob_val,
+                    churn_prediction=pred_val,
+                    risk_category=risk,
+                    explainability=json.dumps({"factors": []}),
+                    model_version=model_name
+                )
+                db.add(pred_obj)
+                predictions_run += 1
+            db.commit()
 
+        db.close()
         return {
             "status": "success",
             "records_count": count,
-            "predictions_generated": count
+            "predictions_generated": predictions_run
         }
     except Exception as e:
         raise RuntimeError(f"CSV upload failed: {e}")
