@@ -87,7 +87,7 @@ def _load_standalone_model():
     return None
 
 def _standalone_get_customers() -> List[Dict[str, Any]]:
-    """Reads customers directly from SQLite."""
+    """Reads customers directly from SQLite joined with predictions."""
     db = _get_db_path()
     if not db.exists():
         return []
@@ -95,8 +95,27 @@ def _standalone_get_customers() -> List[Dict[str, Any]]:
     conn.row_factory = sqlite3.Row
     cur = conn.cursor()
     try:
-        rows = cur.execute("SELECT * FROM customers").fetchall()
-        return [dict(r) for r in rows]
+        query = """
+            SELECT 
+                c.*,
+                p.churn_probability,
+                p.churn_prediction,
+                p.risk_category,
+                p.model_version
+            FROM customers c
+            LEFT OUTER JOIN predictions p ON c.customer_id = p.customer_id
+        """
+        rows = cur.execute(query).fetchall()
+        output = []
+        for r in rows:
+            d = dict(r)
+            if d.get("risk_category") is None:
+                d["churn_probability"] = None
+                d["churn_prediction"] = None
+                d["risk_category"] = "Unpredicted"
+                d["model_version"] = "None"
+            output.append(d)
+        return output
     except Exception as e:
         logger.error(f"DB read error: {e}")
         return []
