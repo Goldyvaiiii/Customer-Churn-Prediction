@@ -68,6 +68,8 @@ def _get_db_path() -> Path:
 def _get_model_path() -> Optional[Path]:
     """Finds the saved model file."""
     candidates = [
+        _SRC / "ml" / "models" / "active_model.pkl",
+        _SRC / "ml" / "models" / "best_model.pkl",
         _ROOT / "models" / "best_model.pkl",
         _ROOT / "best_model.pkl",
         _SRC / "ml" / "best_model.pkl",
@@ -264,8 +266,8 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
     """Runs ML training pipeline directly in Streamlit Cloud."""
     try:
         from ml.pipeline import (
-            generate_synthetic_data, preprocess_data,
-            train_all_models, save_model
+            generate_synthetic_data, train_and_evaluate,
+            save_best_pipeline, NUMERIC_FEATURES, CATEGORICAL_FEATURES
         )
         from database import SessionLocal, init_db, Customer as CustomerModel
 
@@ -298,25 +300,22 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
                 paperless_billing=row["PaperlessBilling"],
                 payment_method=row["PaymentMethod"],
                 monthly_charges=float(row["MonthlyCharges"]),
-                total_charges=float(row["TotalCharges"]),
+                total_charges=float(row["TotalCharges"]) if not pd.isna(row["TotalCharges"]) else 0.0,
                 churn=row["Churn"]
             )
             db.add(cust)
         db.commit()
 
         # Train
-        X, y, preprocessor = preprocess_data(df)
-        results, best_name, best_model = train_all_models(X, y)
-        bundle = {"model": best_model, "preprocessor": preprocessor,
-                  "model_name": best_name, "metrics": results[best_name]}
-
-        # Save model
-        models_dir = _ROOT / "models"
-        models_dir.mkdir(exist_ok=True)
-        joblib.dump(bundle, models_dir / "best_model.pkl")
+        trained_pipelines, metrics_dict = train_and_evaluate(df)
+        best_name = save_best_pipeline(trained_pipelines, metrics_dict)
+        
+        # Load the best model bundle to get preprocessor and model
+        best_pipeline = trained_pipelines[best_name]
+        best_model = best_pipeline["model"]
+        preprocessor = best_pipeline["preprocessor"]
 
         # Update predictions in DB
-        from ml.pipeline import NUMERIC_FEATURES, CATEGORICAL_FEATURES
         all_custs = db.query(CustomerModel).all()
         for c in all_custs:
             try:
@@ -346,12 +345,12 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
         db.commit()
         db.close()
 
-        metrics = results[best_name]
+        metrics = metrics_dict[best_name]
         return {
             "status": "success",
             "best_model": best_name,
             "metrics": metrics,
-            "all_metrics": results
+            "all_metrics": metrics_dict
         }
     except Exception as e:
         raise RuntimeError(f"Standalone training failed: {e}")
@@ -359,7 +358,6 @@ def _standalone_seed_and_train() -> Dict[str, Any]:
 def _standalone_upload_csv(file_bytes: bytes, filename: str) -> Dict[str, Any]:
     """Processes uploaded CSV and runs predictions in standalone mode."""
     try:
-        from ml.pipeline import preprocess_data, train_all_models, NUMERIC_FEATURES, CATEGORICAL_FEATURES
         from database import SessionLocal, init_db, Customer as CustomerModel
         import joblib
 
