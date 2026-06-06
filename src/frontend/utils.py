@@ -362,7 +362,10 @@ def _standalone_upload_csv(file_bytes: bytes, filename: str) -> Dict[str, Any]:
         import joblib
 
         init_db()
-        df = pd.read_csv(io.BytesIO(file_bytes))
+        try:
+            df = pd.read_csv(io.BytesIO(file_bytes), encoding="utf-8")
+        except UnicodeDecodeError:
+            df = pd.read_csv(io.BytesIO(file_bytes), encoding="latin-1")
 
         # Normalize column names
         col_map = {c.lower().replace(" ", "_"): c for c in df.columns}

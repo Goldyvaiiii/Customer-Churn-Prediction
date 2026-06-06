@@ -98,7 +98,10 @@ def upload_dataset(file: UploadFile = File(...), db: Session = Depends(get_db)):
         
     try:
         contents = file.file.read()
-        df = pd.read_csv(io.BytesIO(contents))
+        try:
+            df = pd.read_csv(io.BytesIO(contents), encoding="utf-8")
+        except UnicodeDecodeError:
+            df = pd.read_csv(io.BytesIO(contents), encoding="latin-1")
         
         # Validate columns
         required_cols = ["customerID"] + NUMERIC_FEATURES + CATEGORICAL_FEATURES
